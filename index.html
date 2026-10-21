@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Expression Esolang Interpreter</title>
+<style>
+  :root { color-scheme: dark; --bg:#10131a; --panel:#191e28; --panel2:#202736; --text:#eef2f8; --muted:#a8b3c5; --accent:#8bd5ca; --border:#343d4d; --danger:#ff8c8c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }
+  header { padding:24px clamp(16px,4vw,40px) 18px; border-bottom:1px solid var(--border); background:#141923; }
+  h1 { margin:0 0 4px; font-size:clamp(24px,4vw,34px); }
+  header p { margin:0; color:var(--muted); }
+  main { max-width:1400px; margin:auto; padding:20px clamp(12px,3vw,30px) 36px; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+  button { border:1px solid var(--border); border-radius:9px; background:var(--panel2); color:var(--text); padding:9px 13px; font:inherit; cursor:pointer; }
+  button.primary { background:var(--accent); color:#10201e; border-color:transparent; font-weight:700; }
+  button:hover { filter:brightness(1.1); }
+  .layout { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(300px,.75fr); gap:16px; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:13px; overflow:hidden; min-width:0; }
+  .panel h2 { margin:0; padding:12px 15px; font-size:16px; border-bottom:1px solid var(--border); }
+  .panel .body { padding:13px; }
+  textarea, pre { width:100%; border:1px solid var(--border); border-radius:8px; background:#0c0f15; color:var(--text); font:14px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
+  textarea { display:block; padding:12px; resize:vertical; }
+  #code { min-height:400px; tab-size:2; }
+  #stdin { min-height:74px; }
+  #output { min-height:190px; max-height:360px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; padding:12px; margin:0; }
+  .hint { color:var(--muted); font-size:13px; margin:8px 0 0; }
+  .status { padding:9px 12px; border-top:1px solid var(--border); color:var(--muted); font-size:13px; }
+  .status.error { color:var(--danger); }
+  .subgrid { display:grid; grid-template-columns:1fr; gap:16px; }
+  .variables { display:grid; grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); gap:8px; }
+  .var { background:#10141c; border:1px solid var(--border); padding:8px 10px; border-radius:8px; overflow-wrap:anywhere; }
+  .var strong { display:block; color:var(--accent); font-size:12px; }
+  .var span { font-family:ui-monospace,monospace; }
+  details { margin-top:16px; background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px 15px; }
+  summary { cursor:pointer; font-weight:650; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; }
+  th,td { text-align:left; border-bottom:1px solid var(--border); padding:7px 8px; vertical-align:top; }
+  code { color:#c3f3e8; font-family:ui-monospace,monospace; }
+  .note { border-left:3px solid var(--accent); padding:8px 11px; color:var(--muted); background:#121821; border-radius:4px; margin-top:12px; }
+  @media(max-width:850px) { .layout { grid-template-columns:1fr; } #code { min-height:300px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Expression Interpreter</h1>
+  <p>A standalone browser interpreter for the emoticon-based Expression esolang.</p>
+</header>
+<main>
+  <div class="toolbar">
+    <button class="primary" id="run">▶ Run program</button>
+    <button id="clear">Clear output</button>
+    <button id="truth">Load truth machine</button>
+    <button id="hello">Load Hello World</button>
+    <button id="reset">Reset editor</button>
+  </div>
+  <div class="layout">
+    <section class="panel">
+      <h2>Program</h2>
+      <div class="body">
+        <textarea id="code" spellcheck="false" aria-label="Expression program"></textarea>
+        <p class="hint">One command per line. The editor and interpreter run locally in this browser.</p>
+      </div>
+      <div class="status" id="programStatus">Ready.</div>
+    </section>
+    <div class="subgrid">
+      <section class="panel">
+        <h2>Program input</h2>
+        <div class="body">
+          <textarea id="stdin" spellcheck="false" placeholder="Input consumed by (•o•?) — one response per line"></textarea>
+          <p class="hint">Each <code>(•o•?)</code> consumes the next line. For a truth machine, enter <code>0</code> or <code>1</code>.</p>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>Output</h2>
+        <div class="body"><pre id="output" aria-live="polite"></pre></div>
+        <div class="status" id="runStatus">Nothing run yet.</div>
+      </section>
+      <section class="panel">
+        <h2>Variables</h2>
+        <div class="body"><div class="variables" id="variables"><span class="hint">Variables will appear here after execution.</span></div></div>
+      </section>
+    </div>
+  </div>
+  <details>
+    <summary>Supported syntax and current interpreter assumptions</summary>
+    <table>
+      <thead><tr><th>Syntax</th><th>Implemented behavior</th></tr></thead>
+      <tbody>
+        <tr><td><code>(•o•?)</code></td><td>Read the next line from Program input and save it as the latest input value.</td></tr>
+        <tr><td><code>:# Name = expression</code></td><td>Assign a value to a variable. Example: <code>:# Input = :&amp;</code>.</td></tr>
+        <tr><td><code>:&amp;</code></td><td>Use the most recently read input value.</td></tr>
+        <tr><td><code>(•o•) expression</code></td><td>Print a quoted string or the evaluated value of an expression.</td></tr>
+        <tr><td><code>:) / :(</code></td><td>True / false.</td></tr>
+        <tr><td><code>=/ condition</code></td><td>Start an if branch.</td></tr>
+        <tr><td><code> =\ condition</code></td><td>Else-if branch. (Leading spaces are ignored.)</td></tr>
+        <tr><td><code>=|</code></td><td>Else branch.</td></tr>
+        <tr><td><code>=O</code></td><td>Close the current conditional or loop block.</td></tr>
+        <tr><td><code>:S</code></td><td>Start a repeating loop, closed by <code>=O</code>. A safety limit prevents runaway programs.</td></tr>
+        <tr><td><code>&gt;:3</code></td><td>Generate a random integer from 0 through 99; may be used as an expression or printed.</td></tr>
+        <tr><td><code>=, ==, !=, &gt;, &lt;, &gt;=, &lt;=</code></td><td>Comparison operators accepted in conditions.</td></tr>
+      </tbody>
+    </table>
+    
+  </details>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const defaultCode = `(•o•) "Hello World!"`;
+  const truthCode = `(•o•?)
+:# Input = :&
+=/ Input = 0
+(•o•) 0
+=\\ Input = 1
+:S
+(•o•) 1
+=O
+=O`;
+  $('code').value = truthCode;
+
+  function tokenizeExpr(s) {
+    const tokens = [];
+    let i = 0;
+    while (i < s.length) {
+      if (/\s/.test(s[i])) { i++; continue; }
+      if (s.startsWith('>:3', i)) { tokens.push({t:'random',v:'>:3'}); i += 3; continue; }
+      if (s.startsWith(':&', i)) { tokens.push({t:'lastInput',v:':&'}); i += 2; continue; }
+      if (s.startsWith(':)', i)) { tokens.push({t:'literal',v:true}); i += 2; continue; }
+      if (s.startsWith(':(', i)) { tokens.push({t:'literal',v:false}); i += 2; continue; }
+      if (s[i] === '"' || s[i] === "'") {
+        const q = s[i++]; let out = '', closed = false;
+        while (i < s.length) {
+          if (s[i] === '\\\\' && i + 1 < s.length) {
+            const n = s[i+1]; out += n === 'n' ? '\\n' : n === 't' ? '\\t' : n; i += 2; continue;
+          }
+          if (s[i] === q) { i++; closed = true; break; }
+          out += s[i++];
+        }
+        if (!closed) throw new Error('Unclosed string literal.');
+        tokens.push({t:'literal',v:out}); continue;
+      }
+      const op = ['==','!=','>=','<=','&&','||'].find(x => s.startsWith(x,i));
+      if (op) { tokens.push({t:'op',v:op}); i += op.length; continue; }
+      if ('()+-*/%=<>!'.includes(s[i])) { tokens.push({t:'op',v:s[i++]}); continue; }
+      const num = s.slice(i).match(/^(?:\d+\.?\d*|\.\d+)/);
+      if (num) { tokens.push({t:'literal',v:Number(num[0])}); i += num[0].length; continue; }
+      const id = s.slice(i).match(/^[A-Za-z_][A-Za-z0-9_]*/);
+      if (id) { tokens.push({t:'identifier',v:id[0]}); i += id[0].length; continue; }
+      throw new Error(`Unexpected character "${s[i]}" in expression.`);
+    }
+    return tokens;
+  }
+
+  function evaluate(source, env, lastInput) {
+    const ts = tokenizeExpr(source);
+    let p = 0;
+    const peek = () => ts[p];
+    const take = () => ts[p++];
+    const expect = value => {
+      const t = take();
+      if (!t || t.v !== value) throw new Error(`Expected "${value}" in expression.`);
+    };
+    function primary() {
+      const t = take();
+      if (!t) throw new Error('Expected a value in expression.');
+      if (t.t === 'literal') return t.v;
+      if (t.t === 'random') return Math.floor(Math.random() * 100);
+      if (t.t === 'lastInput') return lastInput === undefined ? 0 : coerceInput(lastInput);
+      if (t.v === '(') { const v = logicalOr(); expect(')'); return v; }
+      if (t.t === 'identifier') {
+        if (t.v === 'true') return true;
+        if (t.v === 'false') return false;
+        if (!(t.v in env)) throw new Error(`Variable "${t.v}" has not been defined.`);
+        return env[t.v];
+      }
+      if (t.v === '-') return -Number(primary());
+      if (t.v === '!') return !truthy(primary());
+      throw new Error(`Unexpected token "${t.v}".`);
+    }
+    function binary(next, ops, fn) {
+      return () => {
+        let v = next();
+        while (peek() && ops.includes(peek().v)) { const op = take().v; const r = next(); v = fn(op,v,r); }
+        return v;
+      };
+    }
+    const mul = binary(primary, ['*','/','%'], (op,a,b) => {
+      a=Number(a); b=Number(b);
+      if ((op==='/' || op==='%') && b===0) throw new Error('Division by zero.');
+      if (op==='*') return a*b;
+      if (op==='/') return Math.floor(a/b);
+      return a%b;
+    });
+    const add = binary(mul, ['+','-'], (op,a,b) => op==='+' ? (typeof a==='string'||typeof b==='string' ? String(a)+String(b) : Number(a)+Number(b)) : Number(a)-Number(b));
+    const compare = binary(add, ['=','==','!=','>','<','>=','<='], (op,a,b) => {
+      if (op==='=' || op==='==') return a == b;
+      if (op==='!=') return a != b;
+      if (op==='>') return a > b;
+      if (op==='<') return a < b;
+      if (op==='>=') return a >= b;
+      return a <= b;
+    });
+    const and = binary(compare, ['&&'], (op,a,b) => truthy(a) && truthy(b));
+    const logicalOr = binary(and, ['||'], (op,a,b) => truthy(a) || truthy(b));
+    const result = logicalOr();
+    if (p !== ts.length) throw new Error(`Unexpected token "${ts[p].v}" in expression.`);
+    return result;
+  }
+  function truthy(v) { return !(v === false || v === 0 || v === '' || v === null || v === undefined); }
+  function coerceInput(v) {
+    const s = String(v).trim();
+    if (s === '0') return 0;
+    if (s === '1') return 1;
+    if (s === 'true') return true;
+    if (s === 'false') return false;
+    if (s !== '' && Number.isFinite(Number(s))) return Number(s);
+    return String(v);
+  }
+  function parseProgram(source) {
+    return source.split(/\r?\n/).map((raw, idx) => ({ raw, line:idx+1, code:raw.trim() }))
+      .filter(x => x.code && !x.code.startsWith('//') && !x.code.startsWith('#'));
+  }
+  function isElseIf(s) { return /^=\\\s*/.test(s); }
+  function isIf(s) { return /^=\/\s*/.test(s); }
+  function isElse(s) { return s === '=|'; }
+  function isLoop(s) { return s === ':S'; }
+  function isEnd(s) { return s === '=O'; }
+  function buildPairs(lines) {
+    const stack = [];
+    const pairs = new Map();
+    lines.forEach((x,i) => {
+      if (isIf(x.code) || isLoop(x.code)) stack.push(i);
+      else if (isElseIf(x.code) || isElse(x.code)) {
+        let j = stack.length - 1;
+        while (j >= 0 && lines[stack[j]].code !== undefined && isLoop(lines[stack[j]].code)) j--;
+        if (j < 0 || !isIf(lines[stack[j]].code)) throw new Error(`Line ${x.line}: "${x.code.split(/\\s/)[0]}" has no matching =/ block.`);
+        if (pairs.has(stack[j])) {
+          const prev = pairs.get(stack[j]);
+          if (prev.branches.some(b => b.index === i)) throw new Error(`Line ${x.line}: duplicate branch marker.`);
+          prev.branches.push({index:i, type:isElse(x.code)?'else':'elseif', condition:isElseIf(x.code)?x.code.replace(/^=\\\s*/,''):''});
+        } else {
+          pairs.set(stack[j], {branches:[{index:i,type:isElse(x.code)?'else':'elseif',condition:isElseIf(x.code)?x.code.replace(/^=\\\s*/,''):''}]});
+        }
+      } else if (isEnd(x.code)) {
+        const start = stack.pop();
+        if (start === undefined) throw new Error(`Line ${x.line}: =O has no open block.`);
+        pairs.set(start, {...(pairs.get(start)||{}), end:i});
+      }
+    });
+    if (stack.length) throw new Error(`Line ${lines[stack[stack.length-1]].line}: block is missing =O.`);
+    for (const [start, data] of pairs) {
+      if (isIf(lines[start].code) && data.branches) {
+        for (const b of data.branches) if (b.index > data.end) throw new Error(`Line ${lines[b.index].line}: branch marker is outside its conditional.`);
+      }
+    }
+    return pairs;
+  }
+  function runProgram() {
+    $('output').textContent = '';
+    $('variables').innerHTML = '';
+    $('runStatus').className = 'status';
+    $('programStatus').className = 'status';
+    const out = [];
+    const env = Object.create(null);
+    let lastInput = undefined;
+    const inputs = $('stdin').value.split(/\r?\n/);
+    let inputIndex = 0, steps = 0;
+    try {
+      const lines = parseProgram($('code').value);
+      const pairs = buildPairs(lines);
+      const loopCounts = new Map();
+      const conditionalState = new Map();
+      let pc = 0;
+      while (pc < lines.length) {
+        if (++steps > 100000) throw new Error('Execution safety limit reached (100,000 commands). The program may contain an infinite loop.');
+        const x = lines[pc], s = x.code;
+        try {
+          if (s === '(•o•?)') {
+            lastInput = inputIndex < inputs.length ? inputs[inputIndex++] : '';
+            if (lastInput === '') lastInput = '0';
+          } else if (s.startsWith(':#')) {
+            const m = s.match(/^:#\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/);
+            if (!m) throw new Error('Expected syntax: :# VariableName = expression');
+            env[m[1]] = evaluate(m[2], env, lastInput);
+          } else if (s.startsWith('(•o•)')) {
+            const rest = s.slice('(•o•)'.length).trim();
+            if (!rest) throw new Error('Expected text or an expression after (•o•).');
+            const str = rest.match(/^("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')$/);
+            out.push(str ? evaluate(rest, env, lastInput) : String(evaluate(rest, env, lastInput)));
+          } else if (isIf(s)) {
+            const data = pairs.get(pc);
+            if (!data || data.end === undefined) throw new Error('Conditional has no matching =O.');
+            const branches = [{index:pc,type:'if',condition:s.replace(/^=\/\s*/,'')}, ...(data.branches||[])];
+            let chosen = data.end;
+            let found = false;
+            for (const b of branches) {
+              if (b.type === 'else' || truthy(evaluate(b.condition,env,lastInput))) { chosen = b.index + 1; found = true; break; }
+            }
+            conditionalState.set(pc, found);
+            if (!found) pc = data.end;
+            else pc = chosen - 1;
+          } else if (isElseIf(s) || isElse(s)) {
+            // Branch markers are dispatched by the matching if; reaching one means a prior branch ran.
+            let owner = -1;
+            for (const [start,data] of pairs) if (isIf(lines[start].code) && data.branches && data.branches.some(b=>b.index===pc)) { owner=start; break; }
+            if (owner >= 0) pc = pairs.get(owner).end;
+          } else if (isLoop(s)) {
+            const data = pairs.get(pc);
+            if (!data || data.end === undefined) throw new Error('Loop has no matching =O.');
+            loopCounts.set(pc,(loopCounts.get(pc)||0)+1);
+          } else if (isEnd(s)) {
+            let owner = -1;
+            for (const [start,data] of pairs) if (data.end===pc) { owner=start; break; }
+            if (owner >= 0 && isLoop(lines[owner].code)) pc = owner;
+          } else if (s === '>:3') {
+            out.push(String(Math.floor(Math.random()*100)));
+          } else if (s.startsWith('>:3')) {
+            const rest=s.slice(3).trim();
+            if (rest) out.push(String(evaluate(rest,env,lastInput)));
+            else out.push(String(Math.floor(Math.random()*100)));
+          } else {
+            throw new Error('Unknown command.');
+          }
+        } catch (e) {
+          throw new Error(`Line ${x.line}: ${e.message}`);
+        }
+        pc++;
+      }
+      $('output').textContent = out.join('\n');
+      $('runStatus').textContent = `Finished: ${out.length} output line(s), ${steps} command step(s).`;
+      $('programStatus').textContent = 'Execution completed.';
+      const keys = Object.keys(env);
+      $('variables').innerHTML = keys.length ? '' : '<span class="hint">No variables created.</span>';
+      keys.forEach(k => {
+        const d = document.createElement('div'); d.className='var';
+        const b = document.createElement('strong'); b.textContent=k;
+        const v = document.createElement('span'); v.textContent=String(env[k]);
+        d.append(b,v); $('variables').append(d);
+      });
+    } catch (e) {
+      $('output').textContent = out.join('\n');
+      $('runStatus').className = 'status error';
+      $('runStatus').textContent = e.message;
+      $('programStatus').className = 'status error';
+      $('programStatus').textContent = 'Stopped due to an error.';
+      const keys=Object.keys(env);
+      $('variables').innerHTML = keys.length ? '' : '<span class="hint">No variables created.</span>';
+      keys.forEach(k=>{const d=document.createElement('div');d.className='var';const b=document.createElement('strong');b.textContent=k;const v=document.createElement('span');v.textContent=String(env[k]);d.append(b,v);$('variables').append(d);});
+    }
+  }
+  $('run').addEventListener('click', runProgram);
+  $('clear').addEventListener('click', () => { $('output').textContent=''; $('runStatus').textContent='Output cleared.'; });
+  $('truth').addEventListener('click', () => { $('code').value=truthCode; $('stdin').value='0'; $('programStatus').textContent='Truth machine loaded. Set input to 0 or 1, then Run.'; });
+  $('hello').addEventListener('click', () => { $('code').value=defaultCode; $('programStatus').textContent='Hello World loaded.'; });
+  $('reset').addEventListener('click', () => { $('code').value=''; $('stdin').value=''; $('output').textContent=''; $('variables').innerHTML='<span class="hint">Variables will appear here after execution.</span>'; $('programStatus').textContent='Editor reset.'; $('runStatus').textContent='Nothing run yet.'; });
+})();
+</script>
+</body>
+</html>
