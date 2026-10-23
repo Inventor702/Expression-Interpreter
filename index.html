@@ -39,6 +39,13 @@
   th,td { text-align:left; border-bottom:1px solid var(--border); padding:7px 8px; vertical-align:top; }
   code { color:#c3f3e8; font-family:ui-monospace,monospace; }
   .note { border-left:3px solid var(--accent); padding:8px 11px; color:var(--muted); background:#121821; border-radius:4px; margin-top:12px; }
+  .input-waiting { border:2px solid var(--accent); border-radius:10px; padding:10px; background:#172723; margin-top:12px; }
+  .input-waiting[hidden] { display:none; }
+  .input-waiting label { display:block; font-weight:700; margin-bottom:6px; color:var(--accent); }
+  .input-row { display:flex; gap:8px; }
+  .input-row input { flex:1; min-width:0; border:1px solid var(--border); border-radius:8px; background:#0c0f15; color:var(--text); font:inherit; padding:10px; }
+  .input-row button:disabled { opacity:.5; cursor:not-allowed; }
+  .status.waiting { color:var(--accent); font-weight:700; }
   @media(max-width:850px) { .layout { grid-template-columns:1fr; } #code { min-height:300px; } }
 </style>
 </head>
@@ -68,8 +75,14 @@
       <section class="panel">
         <h2>Program input</h2>
         <div class="body">
-          <textarea id="stdin" spellcheck="false" placeholder="Input consumed by (•o•?) — one response per line"></textarea>
-          <p class="hint">Each <code>(•o•?)</code> consumes the next line. For a truth machine, enter <code>0</code> or <code>1</code>.</p>
+          <p class="hint">When the program reaches <code>(•o•?)</code>, it will pause here and ask for a response. For a truth machine, enter <code>0</code> or <code>1</code>.</p>
+          <div id="inputWaiting" class="input-waiting" hidden>
+            <label id="inputPrompt" for="stdin">Program is waiting for input</label>
+            <div class="input-row">
+              <input id="stdin" type="text" autocomplete="off" aria-label="Response to program input" placeholder="Type your response…">
+              <button id="submitInput" class="primary" disabled>Submit input</button>
+            </div>
+          </div>
         </div>
       </section>
       <section class="panel">
@@ -88,7 +101,7 @@
     <table>
       <thead><tr><th>Syntax</th><th>Implemented behavior</th></tr></thead>
       <tbody>
-        <tr><td><code>(•o•?)</code></td><td>Read the next line from Program input and save it as the latest input value.</td></tr>
+        <tr><td><code>(•o•?)</code></td><td>Pause execution and wait for the user to enter a response; save it as the latest input value.</td></tr>
         <tr><td><code>:# Name = expression</code></td><td>Assign a value to a variable. Example: <code>:# Input = :&amp;</code>.</td></tr>
         <tr><td><code>:&amp;</code></td><td>Use the most recently read input value.</td></tr>
         <tr><td><code>(•o•) expression</code></td><td>Print a quoted string or the evaluated value of an expression.</td></tr>
@@ -257,29 +270,80 @@
     }
     return pairs;
   }
-  function runProgram() {
+  let waitingForInput = null;
+  let isRunning = false;
+
+  // Let the browser paint updates during long-running programs.
+  function yieldToBrowser() {
+    return new Promise(resolve => setTimeout(resolve, 0));
+  }
+
+  function refreshVariables(env) {
+    const keys = Object.keys(env);
+    $('variables').innerHTML = keys.length ? '' : '<span class="hint">No variables created.</span>';
+    keys.forEach(k => {
+      const d = document.createElement('div'); d.className='var';
+      const b = document.createElement('strong'); b.textContent=k;
+      const v = document.createElement('span'); v.textContent=String(env[k]);
+      d.append(b,v); $('variables').append(d);
+    });
+  }
+
+  function requestInput(lineNumber) {
+    return new Promise(resolve => {
+      waitingForInput = resolve;
+      $('inputPrompt').textContent = `Waiting for input (requested on line ${lineNumber})`;
+      $('inputWaiting').hidden = false;
+      $('stdin').value = '';
+      $('stdin').disabled = false;
+      $('submitInput').disabled = true;
+      $('programStatus').className = 'status waiting';
+      $('programStatus').textContent = `Waiting for your input at line ${lineNumber}…`;
+      $('runStatus').className = 'status waiting';
+      $('runStatus').textContent = 'Program paused — enter a response above to continue.';
+      $('stdin').focus();
+    });
+  }
+
+  function submitInput() {
+    if (!waitingForInput) return;
+    const response = $('stdin').value;
+    const resolve = waitingForInput;
+    waitingForInput = null;
+    $('inputWaiting').hidden = true;
+    $('stdin').disabled = true;
+    $('submitInput').disabled = true;
+    resolve(response);
+  }
+
+  async function runProgram() {
+    if (isRunning) return;
+    isRunning = true;
+    $('run').disabled = true;
     $('output').textContent = '';
     $('variables').innerHTML = '';
     $('runStatus').className = 'status';
     $('programStatus').className = 'status';
+    $('inputWaiting').hidden = true;
+    $('stdin').disabled = true;
+    $('submitInput').disabled = true;
     const out = [];
     const env = Object.create(null);
     let lastInput = undefined;
-    const inputs = $('stdin').value.split(/\r?\n/);
-    let inputIndex = 0, steps = 0;
+    let steps = 0;
     try {
       const lines = parseProgram($('code').value);
       const pairs = buildPairs(lines);
       const loopCounts = new Map();
       const conditionalState = new Map();
       let pc = 0;
+      let lastRenderedOutputCount = 0;
       while (pc < lines.length) {
         if (++steps > 100000) throw new Error('Execution safety limit reached (100,000 commands). The program may contain an infinite loop.');
         const x = lines[pc], s = x.code;
         try {
           if (s === '(•o•?)') {
-            lastInput = inputIndex < inputs.length ? inputs[inputIndex++] : '';
-            if (lastInput === '') lastInput = '0';
+            lastInput = await requestInput(x.line);
           } else if (s.startsWith(':#')) {
             const m = s.match(/^:#\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/);
             if (!m) throw new Error('Expected syntax: :# VariableName = expression');
@@ -327,34 +391,50 @@
           throw new Error(`Line ${x.line}: ${e.message}`);
         }
         pc++;
+
+        // Refresh in batches instead of rebuilding the entire console on every print.
+        // Yielding gives the browser time to paint the output and respond to the UI.
+        if (steps % 250 === 0) {
+          $('output').textContent = out.join('\n');
+          lastRenderedOutputCount = out.length;
+          $('runStatus').textContent = `Running… ${out.length} output line(s), ${steps} command step(s).`;
+          await yieldToBrowser();
+        }
       }
       $('output').textContent = out.join('\n');
       $('runStatus').textContent = `Finished: ${out.length} output line(s), ${steps} command step(s).`;
       $('programStatus').textContent = 'Execution completed.';
-      const keys = Object.keys(env);
-      $('variables').innerHTML = keys.length ? '' : '<span class="hint">No variables created.</span>';
-      keys.forEach(k => {
-        const d = document.createElement('div'); d.className='var';
-        const b = document.createElement('strong'); b.textContent=k;
-        const v = document.createElement('span'); v.textContent=String(env[k]);
-        d.append(b,v); $('variables').append(d);
-      });
+      refreshVariables(env);
     } catch (e) {
       $('output').textContent = out.join('\n');
       $('runStatus').className = 'status error';
       $('runStatus').textContent = e.message;
       $('programStatus').className = 'status error';
       $('programStatus').textContent = 'Stopped due to an error.';
-      const keys=Object.keys(env);
-      $('variables').innerHTML = keys.length ? '' : '<span class="hint">No variables created.</span>';
-      keys.forEach(k=>{const d=document.createElement('div');d.className='var';const b=document.createElement('strong');b.textContent=k;const v=document.createElement('span');v.textContent=String(env[k]);d.append(b,v);$('variables').append(d);});
+      refreshVariables(env);
+    } finally {
+      isRunning = false;
+      $('run').disabled = false;
+      $('stdin').disabled = true;
+      $('submitInput').disabled = true;
+      $('inputWaiting').hidden = true;
     }
   }
   $('run').addEventListener('click', runProgram);
+  $('submitInput').addEventListener('click', submitInput);
+  $('stdin').addEventListener('input', () => {
+    $('submitInput').disabled = !waitingForInput;
+  });
+  $('stdin').addEventListener('keydown', event => {
+    if (event.key === 'Enter' && waitingForInput) {
+      event.preventDefault();
+      submitInput();
+    }
+  });
   $('clear').addEventListener('click', () => { $('output').textContent=''; $('runStatus').textContent='Output cleared.'; });
-  $('truth').addEventListener('click', () => { $('code').value=truthCode; $('stdin').value='0'; $('programStatus').textContent='Truth machine loaded. Set input to 0 or 1, then Run.'; });
+  $('truth').addEventListener('click', () => { $('code').value=truthCode; $('stdin').value=''; $('programStatus').textContent='Truth machine loaded. Run it, then enter 0 or 1 when prompted.'; });
   $('hello').addEventListener('click', () => { $('code').value=defaultCode; $('programStatus').textContent='Hello World loaded.'; });
-  $('reset').addEventListener('click', () => { $('code').value=''; $('stdin').value=''; $('output').textContent=''; $('variables').innerHTML='<span class="hint">Variables will appear here after execution.</span>'; $('programStatus').textContent='Editor reset.'; $('runStatus').textContent='Nothing run yet.'; });
+  $('reset').addEventListener('click', () => { if (isRunning) return; $('code').value=''; $('stdin').value=''; $('inputWaiting').hidden=true; $('output').textContent=''; $('variables').innerHTML='<span class="hint">Variables will appear here after execution.</span>'; $('programStatus').textContent='Editor reset.'; $('runStatus').textContent='Nothing run yet.'; });
 })();
 </script>
 </body>
