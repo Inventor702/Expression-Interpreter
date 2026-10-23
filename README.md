@@ -23,7 +23,7 @@ Syntax:
  "=|"
  Else
 
- "=\"
+ "=\\"
  Else if
 
  "=O"
